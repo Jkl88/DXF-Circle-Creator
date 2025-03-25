@@ -43,6 +43,15 @@ class ArrayEntry(QWidget):
         self.spinHoleDiameter.setValue(10.0)
         self.spinHoleDiameter.setSuffix(" мм")
         self.spinHoleDiameter.setToolTip("Диаметр отверстия")
+        
+        # Поле ввода для поворота массива (в градусах)
+        self.spinRotation = QDoubleSpinBox()
+        self.spinRotation.setMinimum(-360.0)
+        self.spinRotation.setMaximum(360.0)
+        self.spinRotation.setDecimals(1)
+        self.spinRotation.setValue(0.0)
+        self.spinRotation.setSuffix("°")
+        self.spinRotation.setToolTip("Поворот относительно 0 (в градусах)")
 
         self.removeButton = QPushButton("Х")
         self.removeButton.setFixedWidth(40)
@@ -51,6 +60,7 @@ class ArrayEntry(QWidget):
         layout.addWidget(self.spinArrayDiameter)
         layout.addWidget(self.spinHolesCount)
         layout.addWidget(self.spinHoleDiameter)
+        layout.addWidget(self.spinRotation)
         layout.addWidget(self.removeButton)
 
         self.removeButton.clicked.connect(self.remove_self)
@@ -64,7 +74,8 @@ class ArrayEntry(QWidget):
         array_diameter = self.spinArrayDiameter.value()
         holes_count = self.spinHolesCount.value()
         hole_diameter = self.spinHoleDiameter.value()
-        return array_diameter, holes_count, hole_diameter
+        rotation = self.spinRotation.value()
+        return array_diameter, holes_count, hole_diameter, rotation
 
 # Основное окно приложения
 class MainWindow(QMainWindow):
@@ -161,6 +172,7 @@ class MainWindow(QMainWindow):
         array_entry.spinArrayDiameter.valueChanged.connect(self.update_preview)
         array_entry.spinHolesCount.valueChanged.connect(self.update_preview)
         array_entry.spinHoleDiameter.valueChanged.connect(self.update_preview)
+        array_entry.spinRotation.valueChanged.connect(self.update_preview)
         array_entry.removeButton.clicked.connect(self.update_preview)
         self.update_preview()
 
@@ -169,37 +181,45 @@ class MainWindow(QMainWindow):
         margin = 10
         max_extent = 0
 
-        # Рисуем основной круг
+        # Рисуем основной круг с косметическим пером (фиксированная толщина)
         main_diameter = self.spinMainCircle.value()
         main_radius = main_diameter / 2.0
-        self.previewScene.addEllipse(-main_radius, -main_radius, main_diameter, main_diameter,
-                                     QPen(Qt.GlobalColor.black))
+        pen_main = QPen(Qt.GlobalColor.black)
+        pen_main.setCosmetic(True)
+        self.previewScene.addEllipse(-main_radius, -main_radius, main_diameter, main_diameter, pen_main)
         max_extent = max(max_extent, main_radius)
 
-        # Рисуем массивы отверстий. Отображаются только отверстия.
+        # Рисуем массивы отверстий. Отображаются только отверстия, с учётом поворота.
         for idx in range(self.arraysLayout.count()):
             widget = self.arraysLayout.itemAt(idx).widget()
             if widget is not None:
-                array_diameter, holes_count, hole_diameter = widget.get_values()
+                array_diameter, holes_count, hole_diameter, rotation = widget.get_values()
                 array_radius = array_diameter / 2.0
                 max_extent = max(max_extent, array_radius + hole_diameter / 2.0)
                 # Выбор цвета для массива
                 color_name = self.color_list[idx % len(self.color_list)]
                 pen = QPen(QColor(color_name))
-                # Устанавливаем цвет надписи "Массив:" в соответствие с выбранным цветом
+                pen.setCosmetic(True)
+                # Устанавливаем цвет надписи "Массив:" для данного массива
                 widget.label.setStyleSheet(f"color: {color_name};")
-                # Отрисовка отверстий
+                # Вычисляем смещение поворота (в радианах)
+                rotation_rad = rotation * math.pi / 180.0
+                # Отрисовка отверстий с учетом поворота
                 for j in range(holes_count):
-                    angle = 2 * math.pi * j / holes_count
+                    angle = 2 * math.pi * j / holes_count + rotation_rad
                     x = array_radius * math.cos(angle)
                     y = array_radius * math.sin(angle)
                     hole_radius = hole_diameter / 2.0
                     self.previewScene.addEllipse(x - hole_radius, y - hole_radius, hole_diameter, hole_diameter, pen)
+                # Визуально показываем поворот: рисуем линию от центра до первой позиции отверстия
+                line_x = array_radius * math.cos(rotation_rad)
+                line_y = array_radius * math.sin(rotation_rad)
+                self.previewScene.addLine(0, 0, line_x, line_y, pen)
 
         # Настройка области отображения с отступом
         self.previewScene.setSceneRect(-max_extent - margin, -max_extent - margin,
                                        2 * (max_extent + margin), 2 * (max_extent + margin))
-        # Масштабирование элементов под текущий размер виджета предпросмотра
+        # Масштабирование элементов под текущий размер виджета предпросмотра (линии сохраняют толщину)
         self.previewView.fitInView(self.previewScene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
         # Обновление поля "Название" с основным диаметром круга с префиксом "D_"
@@ -216,10 +236,11 @@ class MainWindow(QMainWindow):
         for idx in range(self.arraysLayout.count()):
             widget = self.arraysLayout.itemAt(idx).widget()
             if widget is not None:
-                array_diameter, holes_count, hole_diameter = widget.get_values()
+                array_diameter, holes_count, hole_diameter, rotation = widget.get_values()
                 array_radius = array_diameter / 2.0
+                rotation_rad = rotation * math.pi / 180.0
                 for j in range(holes_count):
-                    angle = 2 * math.pi * j / holes_count
+                    angle = 2 * math.pi * j / holes_count + rotation_rad
                     x = array_radius * math.cos(angle)
                     y = array_radius * math.sin(angle)
                     msp.add_circle(center=(x, y), radius=hole_diameter / 2.0)
