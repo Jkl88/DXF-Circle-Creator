@@ -1,4 +1,3 @@
-#v1
 import sys
 import math
 import os
@@ -187,6 +186,8 @@ class MainWindow(QMainWindow):
                 # Выбор цвета для массива
                 color_name = self.color_list[idx % len(self.color_list)]
                 pen = QPen(QColor(color_name))
+                # Устанавливаем цвет надписи "Массив:" в соответствие с выбранным цветом
+                widget.label.setStyleSheet(f"color: {color_name};")
                 # Отрисовка отверстий
                 for j in range(holes_count):
                     angle = 2 * math.pi * j / holes_count
@@ -237,7 +238,7 @@ class MainWindow(QMainWindow):
                 file_path += ".dxf"
             try:
                 doc.saveas(file_path)
-                # Создаем диалоговое окно с кнопкой "Открыть папку"
+                # Диалог с кнопками "Открыть папку" и "Закрыть"
                 msg_box = QMessageBox(self)
                 msg_box.setWindowTitle("Успех")
                 msg_box.setText(f"Файл успешно сохранён:\n{file_path}")
