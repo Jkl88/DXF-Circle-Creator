@@ -1,13 +1,15 @@
+#v1
 import sys
 import math
+import os
 import ezdxf
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QScrollArea,
-    QGraphicsView, QGraphicsScene
+    QLabel, QDoubleSpinBox, QSpinBox, QLineEdit, QPushButton, QFileDialog,
+    QMessageBox, QScrollArea, QGraphicsView, QGraphicsScene
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QTransform
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QPainter, QTransform, QColor, QPen, QDesktopServices
 
 # Виджет для ввода параметров массива отверстий
 class ArrayEntry(QWidget):
@@ -16,23 +18,42 @@ class ArrayEntry(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Array:")
-        self.arrayDiameterEdit = QLineEdit()
-        self.arrayDiameterEdit.setPlaceholderText("Array Diameter")
-        self.holesCountEdit = QLineEdit()
-        self.holesCountEdit.setPlaceholderText("Holes Count")
-        self.holeDiameterEdit = QLineEdit()
-        self.holeDiameterEdit.setPlaceholderText("Hole Diameter")
-        self.removeButton = QPushButton("Remove")
-        self.removeButton.setFixedWidth(70)
+        self.label = QLabel("Массив:")
+
+        # Поле ввода для диаметра массива (окружность)
+        self.spinArrayDiameter = QDoubleSpinBox()
+        self.spinArrayDiameter.setMinimum(0.0)
+        self.spinArrayDiameter.setMaximum(10000.0)
+        self.spinArrayDiameter.setDecimals(2)
+        self.spinArrayDiameter.setValue(100.0)
+        self.spinArrayDiameter.setSuffix(" мм")
+        self.spinArrayDiameter.setToolTip("Диаметр окружности, по которой располагаются отверстия")
+
+        # Поле ввода для количества отверстий
+        self.spinHolesCount = QSpinBox()
+        self.spinHolesCount.setMinimum(1)
+        self.spinHolesCount.setMaximum(1000)
+        self.spinHolesCount.setValue(6)
+        self.spinHolesCount.setToolTip("Количество отверстий в массиве")
+
+        # Поле ввода для диаметра отверстия
+        self.spinHoleDiameter = QDoubleSpinBox()
+        self.spinHoleDiameter.setMinimum(0.0)
+        self.spinHoleDiameter.setMaximum(10000.0)
+        self.spinHoleDiameter.setDecimals(2)
+        self.spinHoleDiameter.setValue(10.0)
+        self.spinHoleDiameter.setSuffix(" мм")
+        self.spinHoleDiameter.setToolTip("Диаметр отверстия")
+
+        self.removeButton = QPushButton("Х")
+        self.removeButton.setFixedWidth(40)
 
         layout.addWidget(self.label)
-        layout.addWidget(self.arrayDiameterEdit)
-        layout.addWidget(self.holesCountEdit)
-        layout.addWidget(self.holeDiameterEdit)
+        layout.addWidget(self.spinArrayDiameter)
+        layout.addWidget(self.spinHolesCount)
+        layout.addWidget(self.spinHoleDiameter)
         layout.addWidget(self.removeButton)
 
-        # При нажатии на кнопку «Remove» удаляем данный виджет
         self.removeButton.clicked.connect(self.remove_self)
 
     def remove_self(self):
@@ -41,74 +62,106 @@ class ArrayEntry(QWidget):
         self.deleteLater()
 
     def get_values(self):
-        try:
-            array_diameter = float(self.arrayDiameterEdit.text())
-            holes_count = int(self.holesCountEdit.text())
-            hole_diameter = float(self.holeDiameterEdit.text())
-            return array_diameter, holes_count, hole_diameter
-        except ValueError:
-            raise ValueError("Некорректное значение в параметрах массива.")
+        array_diameter = self.spinArrayDiameter.value()
+        holes_count = self.spinHolesCount.value()
+        hole_diameter = self.spinHoleDiameter.value()
+        return array_diameter, holes_count, hole_diameter
 
 # Основное окно приложения
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DXF Constructor: Circles & Holes")
+        self.setWindowTitle("DXF Конструктор: Круги и Отверстия")
 
         centralWidget = QWidget()
         self.setCentralWidget(centralWidget)
-        mainLayout = QVBoxLayout(centralWidget)
+        # Горизонтальное разделение: слева – элементы управления, справа – предпросмотр
+        mainLayout = QHBoxLayout(centralWidget)
+
+        # Левый блок – элементы управления
+        controlsWidget = QWidget()
+        controlsWidget.setMinimumWidth(400)  # увеличенная ширина для удобного ввода данных
+        controlsLayout = QVBoxLayout(controlsWidget)
+        controlsLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Поля для обозначения и названия файла
+        designationLayout = QHBoxLayout()
+        labelDesignation = QLabel("Обозначение:")
+        self.lineDesignation = QLineEdit()
+        self.lineDesignation.setToolTip("Введите обозначение (необязательно)")
+        designationLayout.addWidget(labelDesignation)
+        designationLayout.addWidget(self.lineDesignation)
+        controlsLayout.addLayout(designationLayout)
+
+        nameLayout = QHBoxLayout()
+        labelName = QLabel("Название:")
+        self.lineName = QLineEdit()
+        self.lineName.setToolTip("Название подставляется автоматически в формате D_[диаметр основного круга]")
+        nameLayout.addWidget(labelName)
+        nameLayout.addWidget(self.lineName)
+        controlsLayout.addLayout(nameLayout)
 
         # Ввод параметров основного круга
         mainCircleLayout = QHBoxLayout()
-        mainCircleLabel = QLabel("Main Circle Diameter:")
-        self.mainCircleEdit = QLineEdit()
-        self.mainCircleEdit.setPlaceholderText("Enter diameter")
+        mainCircleLabel = QLabel("Диаметр основного круга:")
+        self.spinMainCircle = QDoubleSpinBox()
+        self.spinMainCircle.setMinimum(0.0)
+        self.spinMainCircle.setMaximum(10000.0)
+        self.spinMainCircle.setDecimals(2)
+        self.spinMainCircle.setValue(200.0)
+        self.spinMainCircle.setSuffix(" мм")
+        self.spinMainCircle.setToolTip("Введите диаметр основного круга")
         mainCircleLayout.addWidget(mainCircleLabel)
-        mainCircleLayout.addWidget(self.mainCircleEdit)
-        mainLayout.addLayout(mainCircleLayout)
+        mainCircleLayout.addWidget(self.spinMainCircle)
+        controlsLayout.addLayout(mainCircleLayout)
 
-        # Обновление превью при изменении значения основного круга
-        self.mainCircleEdit.textChanged.connect(self.update_preview)
+        self.spinMainCircle.valueChanged.connect(self.update_preview)
 
-        # Раздел для добавления массивов отверстий
-        arraysLabel = QLabel("Hole Arrays:")
-        mainLayout.addWidget(arraysLabel)
+        # Метка для массивов отверстий
+        arraysLabel = QLabel("Массивы отверстий:")
+        controlsLayout.addWidget(arraysLabel)
 
+        # Прокручиваемая область для ввода массивов
         self.scrollArea = QScrollArea()
         self.scrollArea.setWidgetResizable(True)
         self.arraysContainer = QWidget()
         self.arraysLayout = QVBoxLayout(self.arraysContainer)
         self.arraysLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scrollArea.setWidget(self.arraysContainer)
-        mainLayout.addWidget(self.scrollArea, stretch=1)
+        controlsLayout.addWidget(self.scrollArea, stretch=1)
 
         # Кнопка для добавления нового массива
-        self.addArrayButton = QPushButton("Add Array")
+        self.addArrayButton = QPushButton("Добавить массив")
         self.addArrayButton.clicked.connect(self.add_array)
-        mainLayout.addWidget(self.addArrayButton)
+        controlsLayout.addWidget(self.addArrayButton)
 
         # Кнопка для генерации DXF файла
-        self.generateButton = QPushButton("Generate DXF")
+        self.generateButton = QPushButton("Сгенерировать DXF")
         self.generateButton.clicked.connect(self.generate_dxf)
-        mainLayout.addWidget(self.generateButton)
+        controlsLayout.addWidget(self.generateButton)
 
-        # Реальное время просмотра чертежа с использованием QGraphicsView
+        mainLayout.addWidget(controlsWidget, stretch=1)
+
+        # Правый блок – предпросмотр
         self.previewScene = QGraphicsScene(self)
         self.previewView = QGraphicsView(self.previewScene)
         self.previewView.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.previewView.setMinimumSize(400, 400)
-        # Инвертируем ось Y для привычной декартовой системы координат
+        # Инвертируем ось Y для стандартной декартовой системы координат
         self.previewView.setTransform(QTransform().scale(1, -1))
-        mainLayout.addWidget(self.previewView)
+        mainLayout.addWidget(self.previewView, stretch=2)
+
+        # Список цветов для массивов (цвет назначается циклически)
+        self.color_list = ["red", "blue", "green", "orange", "purple", "magenta", "cyan"]
+
+        self.update_preview()
 
     def add_array(self):
         array_entry = ArrayEntry(self.arraysContainer)
         self.arraysLayout.addWidget(array_entry)
-        # Обновляем превью при изменении параметров массива
-        array_entry.arrayDiameterEdit.textChanged.connect(self.update_preview)
-        array_entry.holesCountEdit.textChanged.connect(self.update_preview)
-        array_entry.holeDiameterEdit.textChanged.connect(self.update_preview)
+        array_entry.spinArrayDiameter.valueChanged.connect(self.update_preview)
+        array_entry.spinHolesCount.valueChanged.connect(self.update_preview)
+        array_entry.spinHoleDiameter.valueChanged.connect(self.update_preview)
         array_entry.removeButton.clicked.connect(self.update_preview)
         self.update_preview()
 
@@ -117,58 +170,52 @@ class MainWindow(QMainWindow):
         margin = 10
         max_extent = 0
 
-        # Рисуем основной круг, если введено корректное значение
-        try:
-            main_diameter = float(self.mainCircleEdit.text())
-            main_radius = main_diameter / 2.0
-            self.previewScene.addEllipse(-main_radius, -main_radius, main_diameter, main_diameter)
-            max_extent = max(max_extent, main_radius)
-        except ValueError:
-            pass
+        # Рисуем основной круг
+        main_diameter = self.spinMainCircle.value()
+        main_radius = main_diameter / 2.0
+        self.previewScene.addEllipse(-main_radius, -main_radius, main_diameter, main_diameter,
+                                     QPen(Qt.GlobalColor.black))
+        max_extent = max(max_extent, main_radius)
 
-        # Рисуем каждый массив отверстий
-        for i in range(self.arraysLayout.count()):
-            widget = self.arraysLayout.itemAt(i).widget()
+        # Рисуем массивы отверстий. Отображаются только отверстия.
+        for idx in range(self.arraysLayout.count()):
+            widget = self.arraysLayout.itemAt(idx).widget()
             if widget is not None:
-                try:
-                    array_diameter, holes_count, hole_diameter = widget.get_values()
-                    array_radius = array_diameter / 2.0
-                    max_extent = max(max_extent, array_radius + hole_diameter/2.0)
-                    for j in range(holes_count):
-                        angle = 2 * math.pi * j / holes_count
-                        x = array_radius * math.cos(angle)
-                        y = array_radius * math.sin(angle)
-                        hole_radius = hole_diameter / 2.0
-                        self.previewScene.addEllipse(x - hole_radius, y - hole_radius, hole_diameter, hole_diameter)
-                except ValueError:
-                    continue
+                array_diameter, holes_count, hole_diameter = widget.get_values()
+                array_radius = array_diameter / 2.0
+                max_extent = max(max_extent, array_radius + hole_diameter / 2.0)
+                # Выбор цвета для массива
+                color_name = self.color_list[idx % len(self.color_list)]
+                pen = QPen(QColor(color_name))
+                # Отрисовка отверстий
+                for j in range(holes_count):
+                    angle = 2 * math.pi * j / holes_count
+                    x = array_radius * math.cos(angle)
+                    y = array_radius * math.sin(angle)
+                    hole_radius = hole_diameter / 2.0
+                    self.previewScene.addEllipse(x - hole_radius, y - hole_radius, hole_diameter, hole_diameter, pen)
 
-        # Настраиваем область отображения с учётом отступа
+        # Настройка области отображения с отступом
         self.previewScene.setSceneRect(-max_extent - margin, -max_extent - margin,
-                                       2*(max_extent + margin), 2*(max_extent + margin))
+                                       2 * (max_extent + margin), 2 * (max_extent + margin))
+        # Масштабирование элементов под текущий размер виджета предпросмотра
+        self.previewView.fitInView(self.previewScene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+        # Обновление поля "Название" с основным диаметром круга с префиксом "D_"
+        self.lineName.setText(f"D_{main_diameter:.2f}")
 
     def generate_dxf(self):
-        try:
-            main_diameter = float(self.mainCircleEdit.text())
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Please enter a valid main circle diameter.")
-            return
-
+        main_diameter = self.spinMainCircle.value()
         doc = ezdxf.new(dxfversion="R2010")
         msp = doc.modelspace()
 
         main_radius = main_diameter / 2.0
         msp.add_circle(center=(0, 0), radius=main_radius)
 
-        for i in range(self.arraysLayout.count()):
-            widget = self.arraysLayout.itemAt(i).widget()
+        for idx in range(self.arraysLayout.count()):
+            widget = self.arraysLayout.itemAt(idx).widget()
             if widget is not None:
-                try:
-                    array_diameter, holes_count, hole_diameter = widget.get_values()
-                except ValueError as e:
-                    QMessageBox.critical(self, "Error", str(e))
-                    return
-
+                array_diameter, holes_count, hole_diameter = widget.get_values()
                 array_radius = array_diameter / 2.0
                 for j in range(holes_count):
                     angle = 2 * math.pi * j / holes_count
@@ -176,18 +223,37 @@ class MainWindow(QMainWindow):
                     y = array_radius * math.sin(angle)
                     msp.add_circle(center=(x, y), radius=hole_diameter / 2.0)
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save DXF", filter="DXF Files (*.dxf)")
+        # Формирование имени файла согласно введённым полям
+        designation = self.lineDesignation.text().strip()
+        name = self.lineName.text().strip() if self.lineName.text().strip() else f"D_{main_diameter:.2f}"
+        if designation:
+            default_filename = f"{designation}_{name}.dxf"
+        else:
+            default_filename = f"{name}.dxf"
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить DXF", default_filename, filter="DXF файлы (*.dxf)")
         if file_path:
+            if not file_path.lower().endswith(".dxf"):
+                file_path += ".dxf"
             try:
                 doc.saveas(file_path)
-                QMessageBox.information(self, "Success", f"File saved successfully:\n{file_path}")
+                # Создаем диалоговое окно с кнопкой "Открыть папку"
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Успех")
+                msg_box.setText(f"Файл успешно сохранён:\n{file_path}")
+                open_folder_button = msg_box.addButton("Открыть папку", QMessageBox.ButtonRole.ActionRole)
+                msg_box.addButton("Закрыть", QMessageBox.ButtonRole.RejectRole)
+                msg_box.exec()
+                if msg_box.clickedButton() == open_folder_button:
+                    folder = os.path.dirname(file_path)
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error saving file:\n{str(e)}")
+                QMessageBox.critical(self, "Ошибка", f"Ошибка при сохранении файла:\n{str(e)}")
 
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.resize(800, 600)
+    window.resize(1000, 600)
     window.show()
     sys.exit(app.exec())
 
